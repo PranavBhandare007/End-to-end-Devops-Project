@@ -14,7 +14,7 @@ Every resource is defined as code, versioned, and reproducible.
 | Internet Gateway | Attached to VPC |
 | Route Table | 0.0.0.0/0 → Internet Gateway |
 | Security Group | Ingress: SSH 22, HTTP 80 · Egress: all |
-| EC2 Instance | t2.micro, Amazon Linux 2023 |
+| EC2 Instance | t3.micro, Amazon Linux 2023 |
 | S3 Bucket (app) | Private, versioned, encrypted |
 | S3 Bucket (state) | Terraform remote state backend |
 
