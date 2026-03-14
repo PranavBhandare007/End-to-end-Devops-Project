@@ -58,7 +58,7 @@ resource "aws_s3_bucket_public_access_block" "app" {
 resource "aws_iam_role" "ec_role" {
   name = "${var.project_name}-ec2-role"
 
-  assume_role_policy = jsondecode({
+  assume_role_policy = jsonencode({
     Version = "2012-10-17"
     Statement = [
       {
@@ -76,7 +76,7 @@ resource "aws_iam_role_policy" "ec2_s3_policy" {
   name = "${var.project_name}-ec2-s3-policy"
   role = aws_iam_role.ec_role.id
 
-  policy = jsondecode({
+  policy = jsonencode({
     Version = "2012-10-17"
     Statement = [{
       Effect = "Allow"
@@ -87,7 +87,7 @@ resource "aws_iam_role_policy" "ec2_s3_policy" {
         "s3:ListBucket"
       ]
       Resource = [
-        aws_s3_bucket.arn,
+        aws_s3_bucket.app.arn,
         "${aws_s3_bucket.app.arn}/*"
       ]
     }]
