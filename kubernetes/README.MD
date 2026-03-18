@@ -203,3 +203,42 @@ NAME                                          STATUS   ROLES    AGE   VERSION
 ip-192-168-xx-xx.us-east-1.compute.internal  Ready    <none>   2m    v1.xx
 ip-192-168-xx-xx.us-east-1.compute.internal  Ready    <none>   2m    v1.xx
 ```
+
+### Step 3 — Create namespaces
+
+Namespaces logically separate your app from monitoring resources inside the same cluster.
+
+```bash
+kubectl apply -f manifests/namespaces/
+kubectl get namespaces
+```
+
+---
+
+## Phase 2 — Dockerize the Application
+
+### Step 1 — Build images
+
+```bash
+# Build frontend
+docker build -t your-dockerhub-username/devops-frontend:v1 ./apps/frontend
+
+# Build backend
+docker build -t your-dockerhub-username/devops-backend:v1 ./apps/backend
+```
+
+### Step 2 — Push to DockerHub
+
+```bash
+docker login
+
+docker push your-dockerhub-username/devops-frontend:v1
+docker push your-dockerhub-username/devops-backend:v1
+```
+
+### Step 3 — Verify images on DockerHub
+
+Log in to hub.docker.com and confirm both images appear under your account.
+
+---
+
