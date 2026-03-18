@@ -53,30 +53,30 @@ This project deploys a full-stack application (React frontend + Python backend +
   │ NodePort │──────────►│  │  │  Frontend  (React + Nginx)     │  │
   │ Service  │           │  │  │  Deployment — 2 replicas       │  │
   └──────────┘           │  │  └──────────────┬─────────────────┘  │
-                         │  │                 │ HTTP API calls      │
+                         │  │                 │ HTTP API calls     │
                          │  │  ┌──────────────▼─────────────────┐  │
-                         │  │  │  Backend  (Python FastAPI)      │  │
+                         │  │  │  Backend  (Python FastAPI)     │  │
                          │  │  │  Deployment — 2 replicas       │  │
                          │  │  └──────────────┬─────────────────┘  │
-                         │  │                 │ SQL queries         │
+                         │  │                 │ SQL queries        │
                          │  │  ┌──────────────▼─────────────────┐  │
-                         │  │  │  PostgreSQL Database            │  │
+                         │  │  │  PostgreSQL Database           │  │
                          │  │  │  StatefulSet — 1 replica       │  │
                          │  │  └────────────────────────────────┘  │
-                         │  └─────────────────────────────────────-┘│
+                         │  └─────────────────────────────────────┘│
                          │                                         │
-                         │  ┌─────────────┐   monitoring           │
-                         │  │  Namespace  │                        │
+                         │  ┌─────────────┐                        │
+                         │  │  Namespace  │    monitoring          │
                          │  │             │                        │
-                         │  │  ┌──────────────────────────────┐   │
-                         │  │  │  Prometheus                  │   │
-                         │  │  │  Scrapes metrics from pods   │   │
-                         │  │  └──────────────┬───────────────┘   │
+                         │  │  ┌──────────────────────────────┐    │
+                         │  │  │  Prometheus                  │    │
+                         │  │  │  Scrapes metrics from pods   │    │
+                         │  │  └──────────────┬───────────────┘    │
                          │  │                 │ datasource         │
-                         │  │  ┌──────────────▼───────────────┐   │
-                         │  │  │  Grafana                     │   │
-                         │  │  │  Visualizes dashboards       │   │
-                         │  │  └──────────────────────────────┘   │
+                         │  │  ┌──────────────▼───────────────┐    │
+                         │  │  │  Grafana                     │    │
+                         │  │  │  Visualizes dashboards       │    │
+                         │  │  └──────────────────────────────┘    │
                          │  └──────────────────────────────────────┘
                          └─────────────────────────────────────────┘
 ```
