@@ -133,8 +133,9 @@ kubernetes/
 │   │   ├── backend-service.yaml
 │   │   ├── postgres-statefulset.yaml
 │   │   ├── postgres-service.yaml
+|   |   ├── postgres-configmap.yaml  ← Holds init.sql mounted into postgres pod
 │   │   ├── postgres-pvc.yaml        ← Persistent Volume Claim
-│   │   └── secrets.yaml             ← DB credentials (base64 encoded)
+│   │   └── secrets.yaml             ← DB credentials (never commit to Git )
 │   │
 │   └── monitoring/
 │       ├── prometheus/
@@ -174,37 +175,46 @@ aws sts get-caller-identity
 
 ## Phase 1 — EKS Cluster Setup
 
-### Step 1 — Create the cluster
+### Step 1 — Create cluster and nodegroup
 
 ```bash
 eksctl create cluster \
   --name devops-project \
   --region us-east-1 \
   --nodegroup-name devops-nodes \
-  --node-type t3.medium \
+  --node-type t3.micro \
   --nodes 2 \
   --nodes-min 1 \
-  --nodes-max 3 \
+  --nodes-max 2 \
   --managed
 ```
 
-> This takes 15–20 minutes. eksctl creates the VPC, subnets, IAM roles, and EC2 worker nodes automatically.
+> This takes 15–20 minutes. Creates VPC, subnets, IAM roles, control plane and worker nodes.
 
-### Step 2 — Verify cluster connection
+> ⚠️ **Free tier note** — use `t3.micro` (free tier eligible). Using `t3.medium` or larger will cause nodegroup timeouts on free tier accounts.
+
+### Step 2 — Update kubeconfig
 
 ```bash
-# eksctl automatically updates ~/.kube/config
+aws eks update-kubeconfig \
+  --name devops-project \
+  --region us-east-1
+```
+### Step 3 — Verify cluster connection
+
+```bash
 kubectl get nodes
+kubectl get nodes -o wide
 ```
 
 Expected output:
 ```
-NAME                                          STATUS   ROLES    AGE   VERSION
+NAME                                         STATUS   ROLES    AGE   VERSION
 ip-192-168-xx-xx.us-east-1.compute.internal  Ready    <none>   2m    v1.xx
 ip-192-168-xx-xx.us-east-1.compute.internal  Ready    <none>   2m    v1.xx
 ```
 
-### Step 3 — Create namespaces
+### Step 4 — Create namespaces
 
 Namespaces logically separate your app from monitoring resources inside the same cluster.
 
@@ -217,28 +227,45 @@ kubectl get namespaces
 
 ## Phase 2 — Dockerize the Application
 
-### Step 1 — Build images
-
-```bash
-# Build frontend
-docker build -t your-dockerhub-username/devops-frontend:v1 ./apps/frontend
-
-# Build backend
-docker build -t your-dockerhub-username/devops-backend:v1 ./apps/backend
-```
-
-### Step 2 — Push to DockerHub
+### Step 1 — Login to DockerHub
 
 ```bash
 docker login
-
-docker push your-dockerhub-username/devops-frontend:v1
-docker push your-dockerhub-username/devops-backend:v1
+# Enter your DockerHub username and password
 ```
 
-### Step 3 — Verify images on DockerHub
+### Step 2 — Build and push backend
 
-Log in to hub.docker.com and confirm both images appear under your account.
+```bash
+cd ~/End-to-end-Devops-Project/kubernetes/apps/backend
+
+# Build using python:3.11-alpine (lightest, fewest vulnerabilities)
+docker build -t pranav5/end-to-end-devops-project:backend-v1 .
+
+docker push pranav5/end-to-end-devops-project:backend-v1
+```
+
+### Step 3 — Build and push frontend
+
+```bash
+cd ~/End-to-end-Devops-Project/kubernetes/apps/frontend
+
+# Multi-stage build: node:18-alpine → nginx:alpine
+docker build -t pranav5/end-to-end-devops-project:frontend-v1 .
+
+docker push pranav5/end-to-end-devops-project:frontend-v1
+```
+
+### Step 4 — Verify images on DockerHub
+
+Log in to hub.docker.com and confirm both tags appear under `pranav5/end-to-end-devops-project`.
+
+```
+pranav5/end-to-end-devops-project
+├── backend-v1   ← Python FastAPI (python:3.11-alpine)
+└── frontend-v1  ← React + Nginx  (nginx:alpine)
+```
+
+> **Why Alpine?** Alpine images are ~50MB vs ~150MB for slim/bookworm and have significantly fewer vulnerabilities flagged by scanners like Trivy or VS Code Docker extension.
 
 ---
-
