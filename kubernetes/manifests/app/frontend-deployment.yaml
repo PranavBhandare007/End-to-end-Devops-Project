@@ -15,7 +15,8 @@ spec:
     spec:
       containers:
         - name: frontend
-          image: pranav5/end-to-end-devops-project:frontend-v2
+          image: pranav5/end-to-end-devops-project:frontend-latest
+          imagePullPolicy: Always
           ports:
             - containerPort: 80
           resources:
