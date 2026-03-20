@@ -269,3 +269,94 @@ pranav5/end-to-end-devops-project
 > **Why Alpine?** Alpine images are ~50MB vs ~150MB for slim/bookworm and have significantly fewer vulnerabilities flagged by scanners like Trivy or VS Code Docker extension.
 
 ---
+## Phase 3 — Deploy to Kubernetes
+
+> All commands run from `~/End-to-end-Devops-Project/kubernetes/`
+
+### Step 1 — Install EBS CSI Driver
+
+EKS needs this driver to provision EBS volumes for PostgreSQL persistent storage. Without it PVC will stay in `Pending` state forever.
+
+```bash
+eksctl create addon \
+  --name aws-ebs-csi-driver \
+  --cluster devops-project \
+  --region us-east-1 \
+  --force
+```
+
+Attach the required IAM policy to the node role:
+```bash
+# Get node role name
+ROLE_NAME=$(aws iam list-roles \
+  --query "Roles[?contains(RoleName, 'NodeInstanceRole')].RoleName" \
+  --output text)
+
+echo $ROLE_NAME
+
+# Attach EBS CSI policy
+aws iam attach-role-policy \
+  --role-name $ROLE_NAME \
+  --policy-arn arn:aws:iam::aws:policy/service-role/AmazonEBSCSIDriverPolicy
+```
+
+Verify driver is running:
+```bash
+kubectl get pods -n kube-system | grep ebs
+```
+
+Expected:
+```
+ebs-csi-controller-xxxxxxxxx   6/6   Running   0   2m
+ebs-csi-node-xxxxx             3/3   Running   0   2m
+ebs-csi-node-xxxxx             3/3   Running   0   2m
+```
+
+### Step 2 — Apply in order
+
+Order matters — secret and database must exist before backend, backend before frontend.
+
+```bash
+cd ~/End-to-end-Devops-Project/kubernetes
+
+# 1. Namespaces first — everything else goes inside these
+kubectl apply -f manifests/namespaces/
+
+# 2. Secret — postgres and backend both need this
+kubectl apply -f manifests/app/secrets.yaml
+
+# 3. PostgreSQL ConfigMap — holds init.sql (creates tables + seed data)
+kubectl apply -f manifests/app/postgres-configmap.yaml
+
+# 4. Storage — EBS volume for postgres data
+kubectl apply -f manifests/app/postgres-pvc.yaml
+
+# 5. Database — StatefulSet
+kubectl apply -f manifests/app/postgres-statefulset.yaml
+kubectl apply -f manifests/app/postgres-service.yaml
+
+# 6. Backend
+kubectl apply -f manifests/app/backend-deployment.yaml
+kubectl apply -f manifests/app/backend-service.yaml
+
+# 7. Frontend — last
+kubectl apply -f manifests/app/frontend-deployment.yaml
+kubectl apply -f manifests/app/frontend-service.yaml
+```
+
+> ⚠️ `secrets.yaml` is in `.gitignore` — never commit real credentials to GitHub.
+
+### Step 3 — Verify pods are running
+
+```bash
+# Watch pods come up live (Ctrl+C to stop)
+kubectl get pods -n app -w
+```
+
+Expected output:
+```
+NAME                        READY   STATUS    RESTARTS   AGE
+backend-xxxxxxxxx-xxxxx     1/1     Running   0          1m
+frontend-xxxxxxxxx-xxxxx    1/1     Running   0          1m
+postgres-0                  1/1     Running   0          1m
+```
