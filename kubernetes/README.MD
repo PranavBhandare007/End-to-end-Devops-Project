@@ -360,3 +360,23 @@ backend-xxxxxxxxx-xxxxx     1/1     Running   0          1m
 frontend-xxxxxxxxx-xxxxx    1/1     Running   0          1m
 postgres-0                  1/1     Running   0          1m
 ```
+
+### Step 4 — Access the application
+
+```bash
+# Get LoadBalancer DNS name
+kubectl get service frontend-service -n app -w
+# Wait until EXTERNAL-IP column shows a DNS name (2-3 mins)
+```
+
+Open browser:
+```
+http://<EXTERNAL-IP>
+```
+
+> 💡 **Why LoadBalancer instead of NodePort?**
+> EKS worker nodes are in private subnets — not directly reachable from the internet.
+> LoadBalancer type tells AWS to provision an internet-facing ALB in the public subnet
+> that forwards traffic into the private worker nodes automatically.
+
+---
