@@ -630,3 +630,328 @@ ClusterRoleBinding  →  assigns role to Prometheus ServiceAccount
 Prometheus Pod  →  uses ServiceAccount  →  can now list and watch pods
 ```
 ---
+## Troubleshooting
+
+Real issues encountered during this project and how they were resolved.
+
+---
+
+### Issue 1 — kubectl connection refused after EKS cluster creation
+
+**Error:**
+```
+E0316 16:57:29.483542 memcache.go:265] "Unhandled Error" err="couldn't get current server API group list:
+Get "http://localhost:8080/api?timeout=32s": dial tcp 127.0.0.1:8080: connect: connection refused"
+The connection to the server localhost:8080 was refused - did you specify the right host or port?
+```
+
+**Root Cause:**
+
+kubectl has no kubeconfig file — it does not know which cluster to connect to. When kubeconfig is missing, kubectl falls back to `localhost:8080` which is wrong. The EKS cluster was created successfully but the `~/.kube/config` file was never generated on this machine.
+
+```
+What kubectl tried to do:        What it should do:
+        │                                │
+        ▼                                ▼
+  localhost:8080              EKS API endpoint on AWS
+  (no cluster here)           (your actual cluster)
+        │
+    Connection refused
+```
+
+**Why it happened:**
+
+`eksctl create cluster` updates kubeconfig automatically on the machine where it runs. If you run eksctl on one machine but kubectl on another (or if the session was lost), the kubeconfig is missing on the second machine.
+
+**Fix:**
+```bash
+aws eks update-kubeconfig \
+  --name devops-project \
+  --region us-east-1
+```
+
+This command fetches the cluster endpoint and credentials from AWS and writes them to `~/.kube/config`.
+
+**Verify fix:**
+```bash
+# Confirm kubeconfig was created
+cat ~/.kube/config
+
+# Confirm kubectl can now reach the cluster
+kubectl get nodes
+```
+
+**Prevention — always run this after creating an EKS cluster on a new machine:**
+```bash
+# After eksctl create cluster, immediately run:
+aws eks update-kubeconfig --name <cluster-name> --region <region>
+```
+
+---
+
+### Issue 2 — EKS Nodegroup timeout
+
+**Error:**
+```
+waiting for CloudFormation stack... still waiting after 25 minutes
+```
+
+**Root Cause:**
+
+The nodegroup CloudFormation stack silently waits and eventually times out. This happens when the selected EC2 instance type is not available or not permitted on your AWS account — the stack never fails explicitly, it just hangs.
+
+**Fix — delete the stuck nodegroup and recreate with a different instance type:**
+```bash
+# Delete the stuck nodegroup
+eksctl delete nodegroup \
+  --cluster devops-project \
+  --region us-east-1 \
+  --name devops-nodes \
+  --wait
+
+# Recreate with your chosen instance type
+eksctl create nodegroup \
+  --cluster devops-project \
+  --region us-east-1 \
+  --name devops-nodes \
+  --node-type t3.small \
+  --nodes 2 \
+  --nodes-min 1 \
+  --nodes-max 2
+```
+
+**Verify nodes are ready:**
+```bash
+kubectl get nodes
+kubectl get nodes -o wide
+```
+
+> 📝 **Note:** If you are on a Free Tier AWS account, certain instance types may not be available or eligible. Check your account's available instance types in the EC2 console before choosing a node type.
+
+---
+
+### Issue 3 — PVC stuck in Pending: no storage class is set
+
+**Error:**
+```
+no persistent volumes available for this claim and no storage class is set
+```
+
+**Root Cause:**
+
+EKS does not provision EBS volumes automatically unless the EBS CSI driver is installed and the PVC specifies a `storageClassName`.
+
+```
+PVC created → looks for storage class → none set → stays Pending forever
+```
+
+**Fix — add `storageClassName: gp2` to PVC:**
+```yaml
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: gp2    # ← this was missing
+  resources:
+    requests:
+      storage: 1Gi
+```
+
+---
+
+### Issue 4 — EBS CSI controller in CrashLoopBackOff
+
+**Error:**
+```
+ebs-csi-controller   1/6   CrashLoopBackOff
+```
+
+**Root Cause:**
+
+The EBS CSI controller needs IAM permissions to create and attach EBS volumes. Without the policy attached to the node IAM role, it crashes immediately on startup.
+
+**Fix — attach EBS CSI IAM policy to node role:**
+```bash
+ROLE_NAME=$(aws iam list-roles \
+  --query "Roles[?contains(RoleName, 'NodeInstanceRole')].RoleName" \
+  --output text)
+
+aws iam attach-role-policy \
+  --role-name $ROLE_NAME \
+  --policy-arn arn:aws:iam::aws:policy/service-role/AmazonEBSCSIDriverPolicy
+
+# Restart the controller
+kubectl rollout restart deployment ebs-csi-controller -n kube-system
+```
+
+**Verify:**
+```bash
+kubectl get pods -n kube-system | grep ebs
+# All 6/6 containers should show Running
+```
+
+---
+
+### Issue 5 — PostgreSQL CrashLoopBackOff: lost+found directory
+
+**Error:**
+```
+initdb: error: directory "/var/lib/postgresql/data" exists but is not empty
+initdb: detail: It contains a lost+found directory, perhaps due to it being a mount point.
+```
+
+**Root Cause:**
+
+When AWS EBS volume is mounted directly at `/var/lib/postgresql/data`, the Linux filesystem creates a `lost+found` directory at the root of the volume. PostgreSQL sees this directory and refuses to initialize, thinking the data directory is already in use.
+
+```
+EBS Volume mounted at /var/lib/postgresql/data
+└── lost+found/     ← created by Linux filesystem
+        │
+        └── PostgreSQL sees this → refuses to start
+```
+
+**Fix — use `subPath` so PostgreSQL writes to a subdirectory, not the volume root:**
+```yaml
+volumeMounts:
+  - name: postgres-storage
+    mountPath: /var/lib/postgresql/data
+    subPath: pgdata    # ← PostgreSQL writes here, lost+found stays at volume root
+```
+
+```
+EBS Volume
+├── lost+found/     ← Linux filesystem (ignored)
+└── pgdata/         ← PostgreSQL data lives here ✅
+```
+
+After updating the StatefulSet, delete and recreate the pod:
+```bash
+kubectl apply -f manifests/app/postgres-statefulset.yaml
+kubectl delete pod postgres-0 -n app
+kubectl get pods -n app -w
+```
+
+---
+
+### Issue 6 — Frontend not reachable via NodePort (private subnet)
+
+**Error:**
+```
+curl: (7) Failed to connect to <node-ip> port 30080: Connection refused
+Site can't be reached
+```
+
+**Root Cause:**
+
+EKS worker nodes are launched in **private subnets** by default. They have public IPs assigned but those IPs are not routable from the internet — traffic cannot reach the NodePort directly.
+
+```
+Browser → Node Public IP:30080 → ❌ private subnet, blocked
+Browser → LoadBalancer DNS:80  → ✅ ALB in public subnet → forwards to private nodes
+```
+
+**Fix — use LoadBalancer service type instead of NodePort:**
+```yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: frontend-service
+  namespace: app
+spec:
+  selector:
+    app: frontend
+  ports:
+    - port: 80
+      targetPort: 80
+  type: LoadBalancer    # ← AWS provisions an internet-facing ALB automatically
+```
+
+```bash
+kubectl apply -f manifests/app/frontend-service.yaml
+
+# Wait for EXTERNAL-IP to be assigned (2-3 mins)
+kubectl get service frontend-service -n app -w
+```
+
+Open browser: `http://<EXTERNAL-IP>`
+---
+
+### Issue 7 — Grafana dashboard shows DS_PROMETHEUS not found
+
+**Error:**
+```
+Datasource ${DS_PROMETHEUS} was not found
+N/A — No data on all panels
+```
+
+**Root Cause:**
+
+Pre-built Grafana dashboards use `${DS_PROMETHEUS}` as a variable that must match both the datasource name and the dashboard variable name exactly. There are two places where this must align:
+
+```
+Dashboard variable name  →  must be  →  DS_PROMETHEUS
+Datasource name          →  must be  →  DS_PROMETHEUS
+
+If either one doesn't match → all panels show N/A
+```
+
+**Fix — two changes required:**
+
+1. **Rename the datasource to `DS_PROMETHEUS`** in Grafana UI:
+   - Go to **Connections → Data Sources**
+   - Click on your Prometheus datasource
+   - Change the **Name** field to `DS_PROMETHEUS`
+   - Click **Save & Test**
+
+2. **Rename the dashboard variable to `DS_PROMETHEUS`**:
+   - Open the dashboard → click **Edit**
+   - Go to **Settings → Variables**
+   - Click on the `datasource` variable
+   - Change the **Name** field to `DS_PROMETHEUS`
+   - Click **Update** → **Save dashboard**
+
+After both changes, all panels will populate with real data.
+
+---
+
+## Cleanup
+
+When done, delete all resources to avoid AWS charges:
+
+```bash
+# Delete all Kubernetes resources
+kubectl delete -f manifests/
+
+# Delete the EKS cluster (also removes worker EC2 nodes)
+eksctl delete cluster --name devops-project --region us-east-1
+```
+
+> ⚠️ Always delete the cluster when not using it. EKS charges ~$0.10/hr for the control plane plus EC2 costs for worker nodes.
+
+---
+
+## What's Next — Part 3
+
+Part 3 builds a full CI/CD pipeline on top of this Kubernetes setup:
+
+```
+Developer pushes code to GitHub
+          │
+          ▼
+    Jenkins picks up the change
+          │
+          ▼
+    Runs tests → Builds Docker image → Pushes to DockerHub
+          │
+          ▼
+    kubectl apply → Rolling update on EKS cluster
+          │
+          ▼
+    Nginx serves the new version — zero downtime
+```
+
+Tools: Jenkins, GitHub, Docker, Nginx
+
+---
+
+*Part of the DevOps End-to-End Project — documented for learning and portfolio purposes.*
