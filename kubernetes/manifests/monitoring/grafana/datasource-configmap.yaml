@@ -1,0 +1,19 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-datasources
+  namespace: monitoring
+data:
+  prometheus.yaml: |
+    apiVersion: 1
+    deleteDatasources:
+      - name: Prometheus
+        orgId: 1
+    datasources:
+      - name: Prometheus
+        type: prometheus
+        uid: DS_PROMETHEUS
+        url: http://prometheus-service.monitoring.svc.cluster.local:9090
+        access: proxy
+        isDefault: true
+        editable: true
