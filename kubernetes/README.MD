@@ -109,9 +109,11 @@ kubernetes/
 │
 ├── apps/
 │   ├── frontend/
-│   │   ├── src/                     ← React source code
-│   │   ├── Dockerfile               ← Multi-stage build (node → nginx)
-│   │   └── nginx.conf               ← Nginx config to proxy API calls
+│   │   ├── src/                     ← React source code (App.js, index.js)
+│   │   ├── public/                  ← index.html
+│   │   ├── package.json             ← React dependencies
+│   │   ├── Dockerfile               ← Multi-stage build (node:alpine → nginx:alpine)
+│   │   └── nginx.conf               ← Nginx config to proxy /api calls to backend
 │   │
 │   ├── backend/
 │   │   ├── main.py                  ← FastAPI application
@@ -128,27 +130,36 @@ kubernetes/
 │   │
 │   ├── app/
 │   │   ├── frontend-deployment.yaml
-│   │   ├── frontend-service.yaml
+│   │   ├── frontend-service.yaml    ← LoadBalancer (AWS ALB, public DNS)
 │   │   ├── backend-deployment.yaml
 │   │   ├── backend-service.yaml
 │   │   ├── postgres-statefulset.yaml
 │   │   ├── postgres-service.yaml
-|   |   ├── postgres-configmap.yaml  ← Holds init.sql mounted into postgres pod
-│   │   ├── postgres-pvc.yaml        ← Persistent Volume Claim
-│   │   └── secrets.yaml             ← DB credentials (never commit to Git )
+│   │   ├── postgres-configmap.yaml  ← Holds init.sql mounted into postgres pod
+│   │   ├── postgres-pvc.yaml        ← Persistent Volume Claim (1GB EBS storage)
+│   │   └── secrets.yaml             ← DB credentials (never commit to Git)
 │   │
 │   └── monitoring/
 │       ├── prometheus/
-│       │   ├── namespace.yaml
 │       │   ├── configmap.yaml       ← prometheus.yml scrape config
 │       │   ├── deployment.yaml
 │       │   ├── service.yaml
 │       │   └── clusterrole.yaml     ← RBAC permissions to scrape pods
 │       │
-│       └── grafana/
-│           ├── deployment.yaml
-│           ├── service.yaml
-│           └── datasource-configmap.yaml ← Auto-configure Prometheus datasource
+│       ├── grafana/
+│       │   ├── deployment.yaml
+│       │   ├── service.yaml
+│       │   ├── datasource-configmap.yaml ← Auto-configure Prometheus datasource (uid: DS_PROMETHEUS)
+│       │   └── dashboard-configmap.yaml  ← Pre-built app metrics dashboard
+│       │
+│       ├── kube-state-metrics/
+│       │   ├── clusterrole.yaml     ← RBAC to read K8s API objects
+│       │   ├── deployment.yaml      ← exposes pod/deployment/node metrics
+│       │   └── service.yaml
+│       │
+│       └── node-exporter/
+│           ├── daemonset.yaml       ← runs on every node, exposes CPU/memory/disk
+│           └── service.yaml
 ```
 
 ---
@@ -182,7 +193,7 @@ eksctl create cluster \
   --name devops-project \
   --region us-east-1 \
   --nodegroup-name devops-nodes \
-  --node-type t3.micro \
+  --node-type t3.small \
   --nodes 2 \
   --nodes-min 1 \
   --nodes-max 2 \
