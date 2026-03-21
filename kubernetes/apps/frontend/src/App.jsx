@@ -7,6 +7,7 @@ function App() {
   const [message, setMessage] = useState({ text: "", type: "" });
   const [loading, setLoading] = useState(false);
   const [fetching, setFetching] = useState(true);
+  const [deletingId, setDeletingId] = useState(null);
 
   useEffect(() => { fetchUsers(); }, []);
 
@@ -41,6 +42,19 @@ function App() {
       showMessage("Failed to create user", "error");
     } finally {
       setLoading(false);
+    }
+  };
+
+  const deleteUser = async (id) => {
+    setDeletingId(id);
+    try {
+      await fetch(`/api/users/${id}`, { method: "DELETE" });
+      showMessage("User deleted successfully!", "success");
+      fetchUsers();
+    } catch {
+      showMessage("Failed to delete user", "error");
+    } finally {
+      setDeletingId(null);
     }
   };
 
@@ -141,6 +155,7 @@ function App() {
                   <th style={styles.th}>Email</th>
                   <th style={styles.th}>ID</th>
                   <th style={styles.th}>Status</th>
+                  <th style={styles.th}>Action</th>
                 </tr>
               </thead>
               <tbody>
@@ -162,6 +177,18 @@ function App() {
                     </td>
                     <td style={styles.td}>
                       <span style={styles.statusBadge}>● Active</span>
+                    </td>
+                    <td style={styles.td}>
+                      <button
+                        style={{
+                          ...styles.deleteBtn,
+                          opacity: deletingId === u.id ? 0.5 : 1
+                        }}
+                        onClick={() => deleteUser(u.id)}
+                        disabled={deletingId === u.id}
+                      >
+                        {deletingId === u.id ? "..." : "🗑 Delete"}
+                      </button>
                     </td>
                   </tr>
                 ))}
@@ -209,6 +236,7 @@ const styles = {
   label:       { display: "block", fontSize: "13px", color: "#64748b", marginBottom: "6px", fontWeight: "500" },
   input:       { width: "100%", padding: "10px 12px", border: "1px solid #e2e8f0", borderRadius: "8px", fontSize: "14px", boxSizing: "border-box", outline: "none" },
   btn:         { background: "#3b82f6", color: "white", border: "none", padding: "10px 24px", borderRadius: "8px", cursor: "pointer", fontSize: "14px", fontWeight: "bold", whiteSpace: "nowrap" },
+  deleteBtn:   { background: "#fee2e2", color: "#dc2626", border: "1px solid #fca5a5", padding: "6px 12px", borderRadius: "6px", cursor: "pointer", fontSize: "12px", fontWeight: "500" },
   alert:       { marginTop: "14px", padding: "10px 14px", borderRadius: "8px", fontSize: "14px" },
   refreshBtn:  { background: "#f1f5f9", border: "1px solid #e2e8f0", padding: "6px 12px", borderRadius: "6px", cursor: "pointer", fontSize: "12px", color: "#64748b" },
   empty:       { textAlign: "center", color: "#94a3b8", padding: "40px", fontSize: "14px" },
@@ -227,6 +255,7 @@ const styles = {
   statCard:    { flex: 1, background: "white", borderRadius: "12px", padding: "20px", textAlign: "center", boxShadow: "0 1px 4px rgba(0,0,0,0.08)" },
   statNumber:  { fontSize: "32px", fontWeight: "bold", color: "#1e293b" },
   statLabel:   { fontSize: "13px", color: "#94a3b8", marginTop: "4px" },
+  deleteBtn:   { background: "#fee2e2", color: "#dc2626", border: "1px solid #fca5a5", padding: "6px 12px", borderRadius: "6px", cursor: "pointer", fontSize: "12px", fontWeight: "500" },
 };
 
 export default App;

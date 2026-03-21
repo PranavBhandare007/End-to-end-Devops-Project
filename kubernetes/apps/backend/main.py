@@ -7,10 +7,8 @@ from fastapi.responses import Response
 from fastapi.middleware.cors import CORSMiddleware
 import time
 
-# ── App instance ────────────────────────────────────────────────────────────
 app = FastAPI(title="DevOps Project API")
 
-# ── CORS — allows React frontend to call this API ───────────────────────────
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -18,7 +16,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ── Prometheus metrics ───────────────────────────────────────────────────────
 REQUEST_COUNT = Counter(
     "app_request_count_total",
     "Total number of requests",
@@ -31,7 +28,6 @@ REQUEST_LATENCY = Histogram(
     ["endpoint"]
 )
 
-# ── Database connection ──────────────────────────────────────────────────────
 def get_db_connection():
     return psycopg2.connect(
         host=os.getenv("DB_HOST", "postgres-service"),
@@ -41,18 +37,14 @@ def get_db_connection():
         password=os.getenv("DB_PASSWORD", "apppassword")
     )
 
-# ── Pydantic model — defines shape of request body ──────────────────────────
 class User(BaseModel):
     name: str
     email: str
-
-# ── Routes ───────────────────────────────────────────────────────────────────
 
 @app.get("/")
 def health_check():
     REQUEST_COUNT.labels(method="GET", endpoint="/").inc()
     return {"status": "healthy", "service": "backend"}
-
 
 @app.get("/api/users")
 def get_users():
@@ -65,13 +57,11 @@ def get_users():
         rows = cur.fetchall()
         cur.close()
         conn.close()
-        users = [{"id": r[0], "name": r[1], "email": r[2]} for r in rows]
-        return {"users": users}
+        return {"users": [{"id": r[0], "name": r[1], "email": r[2]} for r in rows]}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
     finally:
         REQUEST_LATENCY.labels(endpoint="/api/users").observe(time.time() - start)
-
 
 @app.post("/api/users")
 def create_user(user: User):
@@ -94,8 +84,28 @@ def create_user(user: User):
     finally:
         REQUEST_LATENCY.labels(endpoint="/api/users").observe(time.time() - start)
 
+@app.delete("/api/users/{user_id}")
+def delete_user(user_id: int):
+    start = time.time()
+    REQUEST_COUNT.labels(method="DELETE", endpoint="/api/users").inc()
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("DELETE FROM users WHERE id = %s RETURNING id;", (user_id,))
+        deleted = cur.fetchone()
+        conn.commit()
+        cur.close()
+        conn.close()
+        if not deleted:
+            raise HTTPException(status_code=404, detail="User not found")
+        return {"message": "User deleted", "id": user_id}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        REQUEST_LATENCY.labels(endpoint="/api/users").observe(time.time() - start)
 
 @app.get("/metrics")
 def metrics():
-    # Prometheus scrapes this endpoint every 15 seconds
     return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
