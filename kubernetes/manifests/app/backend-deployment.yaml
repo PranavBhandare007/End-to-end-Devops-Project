@@ -15,8 +15,8 @@ spec:
     spec:
       containers:
         - name: backend
-          image: pranav5/end-to-end-devops-project:backend-latest
-          imagePullPolicy: Always
+          image: pranav5/end-to-end-devops-project:backend-${BUILD_TAG}
+          imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 8000
           env:
