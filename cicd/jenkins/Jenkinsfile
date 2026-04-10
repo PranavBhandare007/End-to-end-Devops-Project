@@ -52,28 +52,20 @@ pipeline {
             steps {
                 echo ' Deploying to EKS...'
                 sh '''
+                    # 1. Authenticate with AWS EKS
                     aws eks update-kubeconfig --name $CLUSTER --region $REGION
-                    // kubectl rollout restart deployment/backend -n app
-                    // kubectl rollout restart deployment/frontend -n app
-                   // kubectl set image deployment/backend backend=$DOCKER_REPO:backend-$BUILD_TAG -n app  -- Imperative approach
-                   // kubectl set image deployment/frontend frontend=$DOCKER_REPO:frontend-$BUILD_TAG -n app
 
-                    sh "envsubst < ./kubernetes/manifests/app/backend-deployment.yaml | kubectl apply -f - -n app"
-                    sh "envsubst < ./kubernetes/manifests/app/frontend-deployment.yaml | kubectl apply -f - -n app"
+                    # Imperative approach
+                    # kubectl set image deployment/backend backend=$DOCKER_REPO:backend-$BUILD_TAG -n app
+                    # kubectl set image deployment/frontend frontend=$DOCKER_REPO:frontend-$BUILD_TAG -n app
 
+                    # 2. Declarative approach: Substitute variables and apply
+                    envsubst < ./kubernetes/manifests/app/backend-deployment.yaml | kubectl apply -f - -n app
+                    envsubst < ./kubernetes/manifests/app/frontend-deployment.yaml | kubectl apply -f - -n app
 
+                    # 3. Wait for rollouts to complete
                     kubectl rollout status deployment/backend -n app --timeout=120s
                     kubectl rollout status deployment/frontend -n app --timeout=120s
-                '''
-            }
-        }
-
-        stage('Verify') {
-            steps {
-                echo ' Verifying deployment...'
-                sh '''
-                    kubectl get pods -n app
-                    kubectl get service frontend-service -n app
                 '''
             }
         }
