@@ -14,6 +14,35 @@ pipeline {
             steps {
                 echo ' Cloning repository...'
                 checkout scm
+                // echo '📥 Pulling code from private GitHub repo...'
+                // git branch: 'main', 
+                //     credentialsId: 'github-token', 
+                //     url: 'https://github.com/PranavBhandare007/End-to-end-Devops-Project.git'
+            }
+            }
+        }
+
+        stage('SonarQube Analysis') {
+            steps {
+                echo '🔍 Running Static Code Analysis...'
+                // 'sonar-server' must match the name you configured in Jenkins -> System
+                withSonarQubeEnv('sonar-server') { 
+                    sh '''
+                        $SCANNER_HOME/bin/sonar-scanner \
+                        -Dsonar.projectKey=end-to-end-devops-project \
+                        -Dsonar.sources=. 
+                    '''
+                }
+            }
+        }
+
+        stage('Quality Gate') {
+            steps {
+                echo '⏳ Waiting for SonarQube Quality Gate verdict...'
+                timeout(time: 10, unit: 'MINUTES') {
+                    // This will abort the pipeline if SonarQube says the code quality is too low
+                    waitForQualityGate abortPipeline: true
+                }
             }
         }
 
