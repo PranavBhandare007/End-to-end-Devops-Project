@@ -47,17 +47,18 @@ Developer pushes code to GitHub
           ▼
   Jenkins EC2 (c7i-flex.large, Ubuntu 22.04)
           │
-          ├── Stage 1: Checkout       → pulls latest code from GitHub
-          ├── Stage 2: Build Backend  → docker build backend image
-          ├── Stage 3: Build Frontend → docker build frontend image
-          ├── Stage 4: Push Images    → pushes both to DockerHub
-          ├── Stage 5: Deploy         → kubectl rollout restart
-          └── Stage 6: Verify         → confirms pods are Running
+          ├── Stage 1: Checkout         → pulls latest code from GitHub
+          ├── Stage 2: SonarQube        → static code analysis
+          ├── Stage 3: Quality Gate     → aborts if code quality fails
+          ├── Stage 4: Build Backend    → docker build backend image
+          ├── Stage 5: Build Frontend   → docker build frontend image
+          ├── Stage 6: Push Images      → pushes both to DockerHub
+          └── Stage 7: Deploy to EKS   → envsubst + kubectl apply
                     │
                     ▼
           AWS EKS Cluster (us-east-1)
-          ├── frontend pod  ← pulls new image automatically
-          └── backend pod   ← pulls new image automatically
+          ├── frontend pod  ← pulls new image with build tag
+          └── backend pod   ← pulls new image with build tag
                     │
                     ▼
           AWS LoadBalancer → End User
@@ -71,6 +72,7 @@ Developer pushes code to GitHub
 |---|---|
 | Jenkins | CI/CD orchestration — runs all pipeline stages |
 | GitHub | Source code storage + webhook trigger |
+| SonarQube | Static code analysis and quality gate |
 | Docker | Build and package app into container images |
 | DockerHub | Store and serve Docker images (`pranav5/end-to-end-devops-project`) |
 | kubectl | Deploy updated images to EKS cluster |
@@ -86,7 +88,7 @@ cicd/
 ├── README.md                   ← This file
 │
 └── jenkins/
-    ├── Jenkinsfile             ← Complete pipeline definition (all 6 stages)
+    ├── Jenkinsfile             ← Complete pipeline definition (all 7 stages)
     └── install.sh              ← Setup script for Jenkins EC2
 ```
 
@@ -114,10 +116,21 @@ git --version            # Git
 - Pipeline
 - Docker Pipeline
 - GitHub Integration
+- SonarQube Scanner
+
+### Tools configured in Jenkins:
+- SonarQube Scanner — configured under `Manage Jenkins → Tools → SonarQube Scanner`
+  - Name must match: `sonar-scanner`
+
+### SonarQube server configured in Jenkins:
+- Configured under `Manage Jenkins → System → SonarQube servers`
+  - Name must match: `sonar-server`
+  - URL: `http://<SONARQUBE-IP>:9000`
 
 ### Credentials stored in Jenkins:
 - DockerHub — `dockerhub-credentials` (username + password)
 - GitHub — for repo access
+- SonarQube token — added under SonarQube server configuration
 
 ---
 
@@ -220,6 +233,50 @@ Description: GitHub Access
 > → Generate new token → Select scopes: `repo`, `admin:repo_hook`
 > → Generate token → copy it immediately (shown only once)
 
+### Step 6 — Configure SonarQube in Jenkins
+
+**Add SonarQube server:**
+```
+Jenkins UI
+→ Manage Jenkins
+→ System
+→ SonarQube servers
+→ Add SonarQube
+
+Name:   sonar-server
+URL:    http://<SONARQUBE-IP>:9000
+Token:  Add → Secret text → paste SonarQube token → ID: sonar-token
+→ Save
+```
+
+**Add SonarQube Scanner tool:**
+```
+Jenkins UI
+→ Manage Jenkins
+→ Tools
+→ SonarQube Scanner
+→ Add SonarQube Scanner
+
+Name:                  sonar-scanner
+Install automatically: ✅
+→ Save
+```
+
+**Add webhook in SonarQube so it notifies Jenkins when Quality Gate is ready:**
+```
+SonarQube UI → http://<SONARQUBE-IP>:9000
+→ Administration
+→ Configuration
+→ Webhooks
+→ Create
+
+Name: jenkins
+URL:  http://<JENKINS-EC2-IP>:8080/sonarqube-webhook/
+→ Create
+```
+
+> ⚠️ Without the SonarQube webhook, the `waitForQualityGate` step will hang indefinitely — Jenkins waits for a notification that never arrives.
+
 ---
 
 ## Phase 2 — GitHub Webhook Integration
@@ -269,7 +326,7 @@ Jenkins UI
 ```
 General:
   ✅ GitHub project
-  URL: https://github.com/PranavBhandare007/End-to-end-Devops-Project
+  URL: https://github.com/pranav5/End-to-end-Devops-Project
 
 Build Triggers:
   ✅ GitHub hook trigger for GITScm polling
@@ -277,7 +334,7 @@ Build Triggers:
 Pipeline:
   Definition:     Pipeline script from SCM
   SCM:            Git
-  Repository URL: https://github.com/PranavBhandare007/End-to-end-Devops-Project
+  Repository URL: https://github.com/pranav5/End-to-end-Devops-Project
   Credentials:    select your GitHub credentials
   Branch:         */main
   Script Path:    cicd/jenkins/Jenkinsfile
@@ -289,31 +346,74 @@ Pipeline:
 
 ## Phase 4 — Jenkinsfile Explained
 
-The complete pipeline is defined in `cicd/jenkins/Jenkinsfile`. It has 6 stages:
+The complete pipeline is defined in `cicd/jenkins/Jenkinsfile`. It has 7 stages:
 
 ```
-Stage 1 — Checkout        pulls latest code from GitHub
-Stage 2 — Build Backend   builds Python FastAPI Docker image
-Stage 3 — Build Frontend  builds React + Nginx Docker image
-Stage 4 — Push to DockerHub  pushes both images with :latest tag
-Stage 5 — Deploy to EKS   runs kubectl rollout restart on both deployments
-Stage 6 — Verify          confirms pods are Running and service is available
+Stage 1 — Checkout          pulls latest code from GitHub
+Stage 2 — SonarQube Analysis  scans .py, .js, .jsx source files
+Stage 3 — Quality Gate      aborts pipeline if code quality fails
+Stage 4 — Build Backend     builds Python FastAPI Docker image
+Stage 5 — Build Frontend    builds React + Nginx Docker image
+Stage 6 — Push to DockerHub pushes both images tagged with Jenkins build number
+Stage 7 — Deploy to EKS     uses envsubst to inject build tag into YAML → kubectl apply
 ```
 
 The `post` block always cleans up local Docker images after the pipeline finishes, whether it passed or failed.
 
 > See `cicd/jenkins/Jenkinsfile` for the full pipeline code.
 
-### Why `imagePullPolicy: Always` matters
+### Image tagging strategy — Jenkins build number
+
+Each build produces uniquely tagged images:
+```
+pranav5/end-to-end-devops-project:backend-1
+pranav5/end-to-end-devops-project:backend-2   ← every build gets its own tag
+pranav5/end-to-end-devops-project:frontend-1
+pranav5/end-to-end-devops-project:frontend-2
+```
+
+Deployment YAMLs use `${BUILD_TAG}` as a placeholder:
+```yaml
+image: pranav5/end-to-end-devops-project:frontend-${BUILD_TAG}
+imagePullPolicy: IfNotPresent
+```
+
+`IfNotPresent` is correct here — since every build tag is unique, Kubernetes will never find it cached locally and will always pull the new image. No need for `Always` which pulls on every pod restart regardless.
+
+This enables full traceability and easy rollback:
+```bash
+# Roll back to build 3
+kubectl set image deployment/frontend \
+  frontend=pranav5/end-to-end-devops-project:frontend-3 -n app
+```
+
+### Declarative deployment with envsubst
+
+Instead of `kubectl set image`, the pipeline uses `envsubst` to inject the build tag into the deployment YAML before applying:
+
+```bash
+envsubst < ./kubernetes/manifests/app/backend-deployment.yaml | kubectl apply -f - -n app
+```
+
+This means the YAML files use a variable placeholder:
+```yaml
+image: pranav5/end-to-end-devops-project:backend-${BUILD_TAG}
+```
+
+`envsubst` replaces `${BUILD_TAG}` with the actual Jenkins build number before sending to Kubernetes — keeping everything declarative and version-controlled.
+
+### Why Quality Gate matters
 
 ```
-Without it:
-  kubectl rollout restart → Kubernetes checks node cache
-  Image tagged "latest" already exists locally → skips pull → runs OLD code.
-
-With imagePullPolicy: Always:
-  kubectl rollout restart → Kubernetes always pulls from DockerHub
-  Gets the new image every time → runs NEW code.
+Code pushed → SonarQube scans → Quality Gate check
+                                        │
+                        ┌───────────────┴────────────────┐
+                        │                                │
+                     PASSED                           FAILED
+                        │                                │
+                        ▼                                ▼
+              Pipeline continues              Pipeline aborts here
+              Build → Push → Deploy          No broken code reaches EKS
 ```
 
 ---
@@ -332,15 +432,18 @@ git commit -m "feat: update UI"
 git push
 
 # What happens automatically:
-# 1. GitHub webhook fires   → Jenkins triggered in seconds
-# 2. Jenkins pulls code     → latest from main branch
-# 3. Builds Docker images   → backend-latest, frontend-latest
-# 4. Pushes to DockerHub    → new images available
-# 5. kubectl rollout restart → EKS pulls new images, replaces pods
-# 6. App is live            → zero downtime rolling update
+# 1. GitHub webhook fires      → Jenkins triggered in seconds
+# 2. Jenkins pulls code        → latest from main branch
+# 3. SonarQube scans code      → checks for bugs and vulnerabilities
+# 4. Quality Gate evaluated    → pipeline aborts if quality fails
+# 5. Builds Docker images      → backend-$BUILD_NUMBER, frontend-$BUILD_NUMBER
+# 6. Pushes to DockerHub       → unique tagged images available
+# 7. envsubst injects tag      → YAML updated with build number
+# 8. kubectl apply             → EKS pulls new images, replaces pods
+# 9. App is live               → zero downtime rolling update
 ```
 
-Total time from `git push` to live: **3-5 minutes**
+Total time from `git push` to live: **4-6 minutes**
 
 ---
 
@@ -429,12 +532,29 @@ sudo -u jenkins kubectl get nodes
 
 Kubernetes caches the `latest` image on nodes. When the tag name does not change between deployments, Kubernetes skips pulling the new image and runs the cached old one.
 
-**Fix — add `imagePullPolicy: Always` to both deployments:**
+**Fix — use Jenkins build number as image tag + `IfNotPresent` pull policy:**
+
+```groovy
+// Jenkinsfile
+BUILD_TAG = "${BUILD_NUMBER}"
+// produces: frontend-1, frontend-2, frontend-3 etc.
+```
+
 ```yaml
-containers:
-  - name: frontend
-    image: pranav5/end-to-end-devops-project:frontend-latest
-    imagePullPolicy: Always    # ← forces fresh pull on every pod restart
+# deployment.yaml
+image: pranav5/end-to-end-devops-project:frontend-${BUILD_TAG}
+imagePullPolicy: IfNotPresent
+```
+
+```
+Why this works:
+  Build 5 → image: frontend-5 → not cached → pulls ✅
+  Build 6 → image: frontend-6 → not cached → pulls ✅
+  Same build redeployed → already cached → skips pull ✅ (saves bandwidth)
+
+IfNotPresent vs Always:
+  Always        → pulls every time even if image is cached → wastes bandwidth
+  IfNotPresent  → pulls only when tag is new → correct behaviour with build tags
 ```
 
 ---
