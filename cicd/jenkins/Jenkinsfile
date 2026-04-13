@@ -6,6 +6,7 @@ pipeline {
         CLUSTER     = 'devops-project'
         REGION      = 'us-east-1'
         BUILD_TAG    = "${BUILD_NUMBER}"
+        SCANNER_HOME = tool 'sonar-scanner' 
     }
 
     stages {
