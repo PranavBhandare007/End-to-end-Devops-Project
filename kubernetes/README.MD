@@ -5,6 +5,7 @@
 > - 🔄 Part 2 — Kubernetes Microservice Deployment with Monitoring ← You are here
 > - ⏳ Part 3 — End-to-End CI/CD Pipeline with Jenkins
 
+#Future Scope - Vertical Pod Scaling and cluster autoscaling.
 ---
 
 ## Table of Contents
