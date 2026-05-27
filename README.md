@@ -5,6 +5,7 @@
 ![Docker](https://img.shields.io/badge/Docker-2496ED?style=flat&logo=docker&logoColor=white)
 ![Kubernetes](https://img.shields.io/badge/Kubernetes-326CE5?style=flat&logo=kubernetes&logoColor=white)
 ![Jenkins](https://img.shields.io/badge/Jenkins-D24939?style=flat&logo=jenkins&logoColor=white)
+![SonarQube](https://img.shields.io/badge/SonarQube-4E9BCD?style=flat&logo=sonarqube&logoColor=white)
 ![Prometheus](https://img.shields.io/badge/Prometheus-E6522C?style=flat&logo=prometheus&logoColor=white)
 ![Grafana](https://img.shields.io/badge/Grafana-F46800?style=flat&logo=grafana&logoColor=white)
 ![Python](https://img.shields.io/badge/Python-3776AB?style=flat&logo=python&logoColor=white)
@@ -32,9 +33,10 @@ Developer pushes code
         ▼
 Jenkins EC2 (CI/CD)
         │
-        ├── Build Docker images
+        ├── SonarQube Analysis + Quality Gate
+        ├── Build Docker images (tagged with build number)
         ├── Push to DockerHub
-        └── kubectl rollout restart
+        └── envsubst + kubectl apply
                 │
                 ▼
         AWS EKS Cluster
@@ -90,15 +92,16 @@ Deployed a full-stack application on Amazon EKS with a complete monitoring stack
 ### ✅ Part 3 — End-to-End CI/CD Pipeline with Jenkins
 > Folder: [`/cicd`](./cicd/README.md)
 
-Built an automated CI/CD pipeline triggered by GitHub webhooks. Every `git push` to `main` automatically builds, pushes, and deploys the application to EKS.
+Built an automated CI/CD pipeline triggered by GitHub webhooks. Every `git push` to `main` automatically scans code quality, builds, pushes, and deploys the application to EKS.
 
 | Stage | Action |
 |---|---|
 | Checkout | Pull latest code from GitHub |
+| SonarQube Analysis | Static code analysis for bugs and vulnerabilities |
+| Quality Gate | Abort pipeline if code quality fails |
 | Build | Docker build backend + frontend images |
-| Push | Push images to DockerHub with `:latest` tag |
-| Deploy | `kubectl rollout restart` on EKS |
-| Verify | Confirm pods are Running |
+| Push | Push images to DockerHub tagged with Jenkins build number |
+| Deploy | `envsubst` injects build tag into YAML → `kubectl apply` |
 
 ---
 
@@ -112,6 +115,7 @@ Built an automated CI/CD pipeline triggered by GitHub webhooks. Every `git push`
 | Registry | DockerHub | Store and serve Docker images |
 | Orchestration | Kubernetes (EKS) | Deploy and manage containerised workloads |
 | CI/CD | Jenkins | Automate build, push, deploy pipeline |
+| Code Quality | SonarQube | Static analysis and quality gate |
 | Source Control | GitHub | Code storage + webhook trigger |
 | Monitoring | Prometheus | Scrape and store metrics |
 | Dashboards | Grafana | Visualise cluster and app metrics |
@@ -132,10 +136,13 @@ Container Orchestration   → Kubernetes Deployments, Services,
 Monitoring & Observability→ Prometheus scraping, Grafana dashboards,
                             kube-state-metrics, node-exporter
 CI/CD Automation          → Jenkins pipeline triggered by GitHub webhook
+Code Quality              → SonarQube static analysis + Quality Gate
 GitOps                    → Everything defined as code, stored in Git
 Cloud                     → AWS EKS, EBS, ALB, IAM, EC2
 Security                  → Secrets management, RBAC, IAM roles,
-                            imagePullPolicy, private subnets
+                            IfNotPresent pull policy, private subnets
+Image Versioning          → Jenkins build number as Docker image tag,
+                            full rollback capability
 ```
 
 ---
@@ -172,7 +179,7 @@ End-to-end-Devops-Project/
 └── cicd/                           ← Part 3
     ├── README.md
     └── jenkins/
-        ├── Jenkinsfile             ← Full pipeline definition
+        ├── Jenkinsfile             ← Full 7-stage pipeline definition
         └── install.sh              ← Jenkins EC2 setup script
 ```
 
@@ -198,7 +205,11 @@ eksctl create cluster \
   --nodes 2
 
 # Install EBS CSI driver and attach IAM policy
-eksctl create addon --name aws-ebs-csi-driver --cluster devops-project --region us-east-1 --force
+eksctl create addon \
+  --name aws-ebs-csi-driver \
+  --cluster devops-project \
+  --region us-east-1 \
+  --force
 
 # Deploy application
 cd kubernetes
@@ -218,8 +229,10 @@ chmod +x cicd/jenkins/install.sh
 
 # Then configure Jenkins UI:
 # 1. Add DockerHub and GitHub credentials
-# 2. Create Pipeline job pointing to cicd/jenkins/Jenkinsfile
-# 3. Add GitHub webhook pointing to Jenkins
+# 2. Configure SonarQube server and scanner
+# 3. Add SonarQube webhook in SonarQube UI
+# 4. Create Pipeline job pointing to cicd/jenkins/Jenkinsfile
+# 5. Add GitHub webhook pointing to Jenkins
 ```
 
 ---
@@ -249,6 +262,7 @@ eksctl delete cluster --name devops-project --region us-east-1
 cd terraform && terraform destroy
 
 # Stop Jenkins EC2 from AWS Console when not in use
+# EC2 → Instances → Jenkins EC2 → Instance State → Stop
 ```
 
 > ⚠️ Always delete the EKS cluster when not using it — EKS charges ~$0.10/hr for the control plane plus EC2 costs for worker nodes.
