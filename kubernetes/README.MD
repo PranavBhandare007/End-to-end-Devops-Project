@@ -5,7 +5,7 @@
 > - 🔄 Part 2 — Kubernetes Microservice Deployment with Monitoring ← You are here
 > - ⏳ Part 3 — End-to-End CI/CD Pipeline with Jenkins
 
-#Future Scope - Vertical Pod Scaling and cluster autoscaling.
+#Future Scope - Cluster Autoscaling (scaling EC2 nodes automatically)
 ---
 
 ## Table of Contents
@@ -20,16 +20,17 @@
 8. [Phase 3 — Deploy to Kubernetes](#phase-3--deploy-to-kubernetes)
 9. [Phase 4 — Monitoring with Prometheus](#phase-4--monitoring-with-prometheus)
 10. [Phase 5 — Dashboards with Grafana](#phase-5--dashboards-with-grafana)
-11. [Why YAML Manifests Over Direct Installation?](#why-yaml-manifests-over-direct-installation)
-12. [Monitoring Approach Explained](#monitoring-approach-explained)
-13. [Troubleshooting](#troubleshooting)
-14. [Cleanup](#cleanup)
+11. [Phase 6 — Horizontal Pod Autoscaling](#phase-6--horizontal-pod-autoscaling)
+12. [Why YAML Manifests Over Direct Installation?](#why-yaml-manifests-over-direct-installation)
+13. [Monitoring Approach Explained](#monitoring-approach-explained)
+14. [Troubleshooting](#troubleshooting)
+15. [Cleanup](#cleanup)
 
 ---
 
 ## Project Overview
 
-This project deploys a full-stack application (React frontend + Python backend + PostgreSQL database) on Amazon EKS (Elastic Kubernetes Service). On top of the application, a complete monitoring stack using Prometheus and Grafana is deployed using raw Kubernetes YAML manifests — no Helm charts.
+This project deploys a full-stack application (React frontend + Python backend + PostgreSQL database) on Amazon EKS (Elastic Kubernetes Service). On top of the application, a complete monitoring stack using Prometheus and Grafana is deployed using raw Kubernetes YAML manifests — no Helm charts. The deployment also includes Horizontal Pod Autoscaling so the application automatically scales pods up and down based on CPU usage.
 
 **What you will learn:**
 - How to provision a production-grade Kubernetes cluster on AWS using EKS
@@ -37,6 +38,7 @@ This project deploys a full-stack application (React frontend + Python backend +
 - How to write Kubernetes Deployment, Service, ConfigMap, and Secret manifests
 - How Prometheus scrapes metrics from running pods
 - How Grafana visualizes those metrics into dashboards
+- How Horizontal Pod Autoscaler scales pods automatically based on CPU usage
 - Why GitOps (everything as code in Git) is the right approach
 
 ---
@@ -52,12 +54,12 @@ This project deploys a full-stack application (React frontend + Python backend +
         ▼                │  │             │                        │
   ┌──────────┐           │  │  ┌────────────────────────────────┐  │
   │ NodePort │──────────►│  │  │  Frontend  (React + Nginx)     │  │
-  │ Service  │           │  │  │  Deployment — 2 replicas       │  │
+  │ Service  │           │  │  │  Deployment — HPA 1-4 replicas │  │
   └──────────┘           │  │  └──────────────┬─────────────────┘  │
                          │  │                 │ HTTP API calls     │
                          │  │  ┌──────────────▼─────────────────┐  │
                          │  │  │  Backend  (Python FastAPI)     │  │
-                         │  │  │  Deployment — 2 replicas       │  │
+                         │  │  │  Deployment — HPA 1-4 replicas │  │
                          │  │  └──────────────┬─────────────────┘  │
                          │  │                 │ SQL queries        │
                          │  │  ┌──────────────▼─────────────────┐  │
@@ -79,6 +81,11 @@ This project deploys a full-stack application (React frontend + Python backend +
                          │  │  │  Visualizes dashboards       │    │
                          │  │  └──────────────────────────────┘    │
                          │  └──────────────────────────────────────┘
+                         │                                         │
+                         │  ┌──────────────────────────────────┐   │
+                         │  │  metrics-server                  │   │
+                         │  │  Feeds CPU/memory data to HPA     │   │
+                         │  └──────────────────────────────────┘   │
                          └─────────────────────────────────────────┘
 ```
 
@@ -96,6 +103,7 @@ This project deploys a full-stack application (React frontend + Python backend +
 | Backend | Python (FastAPI) | REST API |
 | Database | PostgreSQL | Persistent data storage |
 | Orchestration | Kubernetes | Deploy, scale, manage containers |
+| Autoscaling | Horizontal Pod Autoscaler + metrics-server | Auto-scale pods based on CPU usage |
 | Monitoring | Prometheus | Metrics collection and storage |
 | Dashboards | Grafana | Metrics visualization |
 | IaC | Raw YAML manifests | All resources defined as code |
@@ -132,8 +140,10 @@ kubernetes/
 │   ├── app/
 │   │   ├── frontend-deployment.yaml
 │   │   ├── frontend-service.yaml    ← LoadBalancer (AWS ALB, public DNS)
+│   │   ├── frontend-hpa.yaml        ← Horizontal Pod Autoscaler (1-4 replicas, 50% CPU)
 │   │   ├── backend-deployment.yaml
 │   │   ├── backend-service.yaml
+│   │   ├── backend-hpa.yaml         ← Horizontal Pod Autoscaler (1-4 replicas, 50% CPU)
 │   │   ├── postgres-statefulset.yaml
 │   │   ├── postgres-service.yaml
 │   │   ├── postgres-configmap.yaml  ← Holds init.sql mounted into postgres pod
@@ -528,6 +538,174 @@ Dashboard 15661 — Cluster Monitoring:
 
 ---
 
+## Phase 6 — Horizontal Pod Autoscaling
+
+### What problem HPA solves
+
+```
+Without HPA:
+  Traffic spike → existing pods overwhelmed → app slows down or crashes
+  Manual scaling → too slow, requires someone watching dashboards 24/7
+
+With HPA:
+  Traffic spike → HPA detects high CPU → automatically adds more pods
+  Traffic drops → HPA automatically removes pods → saves resources
+```
+
+HPA watches a metric (CPU in this case) on your pods and automatically increases or decreases the replica count of a Deployment to keep that metric near a target value.
+
+### Step 1 — Verify metrics-server is running
+
+HPA needs CPU/memory data to make scaling decisions. This comes from `metrics-server`, which usually ships by default with EKS clusters.
+
+```bash
+kubectl get deployment metrics-server -n kube-system
+```
+
+Expected:
+```
+NAME             READY   UP-TO-DATE   AVAILABLE   AGE
+metrics-server   2/2     2            2           Xm
+```
+
+> If not present, install it with:
+> `kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml`
+
+### Step 2 — Confirm deployments define resource requests
+
+HPA calculates percentage utilization based on the `requests.cpu` value set in each Deployment. Without this, HPA cannot compute a percentage and will show `<unknown>`.
+
+```bash
+kubectl get deployment backend -n app -o yaml | grep -A3 resources
+kubectl get deployment frontend -n app -o yaml | grep -A3 resources
+```
+
+Both `backend-deployment.yaml` and `frontend-deployment.yaml` already define:
+```yaml
+resources:
+  requests:
+    cpu: 100m      # backend
+    memory: 64Mi
+  limits:
+    cpu: 200m
+    memory: 128Mi
+```
+
+### Step 3 — Create HPA for backend
+
+```bash
+cat > manifests/app/backend-hpa.yaml << 'EOF'
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: backend-hpa
+  namespace: app
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: backend
+  minReplicas: 1
+  maxReplicas: 4
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 50
+EOF
+```
+
+### Step 4 — Create HPA for frontend
+
+```bash
+cat > manifests/app/frontend-hpa.yaml << 'EOF'
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: frontend-hpa
+  namespace: app
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: frontend
+  minReplicas: 1
+  maxReplicas: 4
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 50
+EOF
+```
+
+### Step 5 — Apply both HPAs
+
+```bash
+kubectl apply -f manifests/app/backend-hpa.yaml
+kubectl apply -f manifests/app/frontend-hpa.yaml
+```
+
+### Step 6 — Verify HPA is working
+
+```bash
+kubectl get hpa -n app
+```
+
+Expected output:
+```
+NAME           REFERENCE             TARGETS   MINPODS   MAXPODS   REPLICAS   AGE
+backend-hpa    Deployment/backend    5%/50%    1         4         1          30s
+frontend-hpa   Deployment/frontend   2%/50%    1         4         1          30s
+```
+
+> If `TARGETS` shows `<unknown>/50%` initially, wait 30–60 seconds for metrics-server to collect the first data point, then check again.
+
+### How HPA decides to scale
+
+```
+Every 15 seconds (default sync period):
+
+HPA Controller
+     │
+     ├──► reads pod CPU usage from metrics-server
+     │
+     ├──► compares against target (50% of requested CPU)
+     │
+     ├──► current usage > target → scales UP (adds a pod)
+     │
+     └──► current usage < target → scales DOWN (removes a pod, after cooldown)
+```
+
+```
+desiredReplicas = ceil( currentReplicas × ( currentCPUUtilization / targetCPUUtilization ) )
+
+Example:
+  1 pod running at 80% CPU, target is 50%
+  desiredReplicas = ceil( 1 × (80 / 50) ) = ceil(1.6) = 2 pods
+```
+
+### Testing HPA (optional)
+
+Generate load on the backend to watch HPA scale pods in real time:
+
+```bash
+# In one terminal — watch HPA live
+kubectl get hpa -n app -w
+
+# In another terminal — generate load
+kubectl run -i --tty load-generator --rm --image=busybox --restart=Never \
+  -n app -- /bin/sh -c "while true; do wget -q -O- http://backend-service:8000/; done"
+```
+
+Watch the `REPLICAS` column increase as CPU usage rises, then drop back down a few minutes after stopping the load generator.
+
+---
+
 ## Why YAML Manifests Over Direct Installation?
 
 This is one of the most important concepts to understand in Kubernetes.
@@ -912,6 +1090,34 @@ If either one doesn't match → all panels show N/A
    - Click **Update** → **Save dashboard**
 
 After both changes, all panels will populate with real data.
+
+---
+
+### Issue 8 — HPA shows `<unknown>/50%` for TARGETS
+
+**Error:**
+```
+NAME          REFERENCE            TARGETS         MINPODS   MAXPODS   REPLICAS
+backend-hpa   Deployment/backend   <unknown>/50%   1         4         1
+```
+
+**Root Cause:**
+
+HPA relies on `metrics-server` to know current CPU usage. Right after creating the HPA, metrics-server has not yet collected a data point for the target pods, or `requests.cpu` is missing from the Deployment spec.
+
+**Fix:**
+```bash
+# 1. Confirm metrics-server is running
+kubectl get deployment metrics-server -n kube-system
+
+# 2. Confirm the Deployment defines requests.cpu
+kubectl get deployment backend -n app -o yaml | grep -A3 resources
+
+# 3. Wait 30-60 seconds and check again
+kubectl get hpa -n app
+```
+
+If `requests.cpu` was missing, add it to the Deployment YAML and reapply — HPA cannot calculate a percentage without a baseline request value to compare against.
 
 ---
 
