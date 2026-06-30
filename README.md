@@ -200,7 +200,7 @@ terraform apply
 # Create EKS cluster
 eksctl create cluster \
   --name devops-project \
-  --region us-east-1 \
+  --region us-west-2 \
   --node-type t3.small \
   --nodes 2
 
@@ -208,7 +208,7 @@ eksctl create cluster \
 eksctl create addon \
   --name aws-ebs-csi-driver \
   --cluster devops-project \
-  --region us-east-1 \
+  --region us-west-2 \
   --force
 
 # Deploy application
@@ -256,7 +256,7 @@ Features:
 
 ```bash
 # Delete EKS cluster
-eksctl delete cluster --name devops-project --region us-east-1
+eksctl delete cluster --name devops-project --region us-west-2
 
 # Destroy Terraform infrastructure
 cd terraform && terraform destroy
