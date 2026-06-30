@@ -127,6 +127,16 @@ git --version            # Git
   - Name must match: `sonar-server`
   - URL: `http://<SONARQUBE-IP>:9000`
 
+### Webhook for Quality Gate (important)
+
+- For waitForQualityGate() to work:
+
+- In SonarQube:
+`Administration → Configuration → Webhooks`
+  - Add:
+`http://<jenkins-ip>:8080/sonarqube-webhook/`
+
+
 ### Credentials stored in Jenkins:
 - DockerHub — `dockerhub-credentials` (username + password)
 - GitHub — for repo access
