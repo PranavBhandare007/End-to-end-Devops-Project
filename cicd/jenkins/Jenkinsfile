@@ -4,7 +4,7 @@ pipeline {
     environment {
         DOCKER_REPO = 'pranav5/end-to-end-devops-project'
         CLUSTER     = 'devops-project'
-        REGION      = 'us-east-1'
+        REGION      = 'us-west-2'
         BUILD_TAG    = "${BUILD_NUMBER}"
         SCANNER_HOME = tool 'sonar-scanner' 
     }
