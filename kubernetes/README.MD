@@ -202,7 +202,7 @@ aws sts get-caller-identity
 ```bash
 eksctl create cluster \
   --name devops-project \
-  --region us-east-1 \
+  --region us-west-2 \
   --nodegroup-name devops-nodes \
   --node-type t3.small \
   --nodes 2 \
@@ -220,7 +220,7 @@ eksctl create cluster \
 ```bash
 aws eks update-kubeconfig \
   --name devops-project \
-  --region us-east-1
+  --region us-west-2
 ```
 ### Step 3 — Verify cluster connection
 
@@ -232,8 +232,8 @@ kubectl get nodes -o wide
 Expected output:
 ```
 NAME                                         STATUS   ROLES    AGE   VERSION
-ip-192-168-xx-xx.us-east-1.compute.internal  Ready    <none>   2m    v1.xx
-ip-192-168-xx-xx.us-east-1.compute.internal  Ready    <none>   2m    v1.xx
+ip-192-168-xx-xx.us-west-2.compute.internal  Ready    <none>   2m    v1.xx
+ip-192-168-xx-xx.us-west-2.compute.internal  Ready    <none>   2m    v1.xx
 ```
 
 ### Step 4 — Create namespaces
@@ -303,7 +303,7 @@ EKS needs this driver to provision EBS volumes for PostgreSQL persistent storage
 eksctl create addon \
   --name aws-ebs-csi-driver \
   --cluster devops-project \
-  --region us-east-1 \
+  --region us-west-2 \
   --force
 ```
 
@@ -846,7 +846,7 @@ What kubectl tried to do:        What it should do:
 ```bash
 aws eks update-kubeconfig \
   --name devops-project \
-  --region us-east-1
+  --region us-west-2
 ```
 
 This command fetches the cluster endpoint and credentials from AWS and writes them to `~/.kube/config`.
@@ -884,14 +884,14 @@ The nodegroup CloudFormation stack silently waits and eventually times out. This
 # Delete the stuck nodegroup
 eksctl delete nodegroup \
   --cluster devops-project \
-  --region us-east-1 \
+  --region us-west-2 \
   --name devops-nodes \
   --wait
 
 # Recreate with your chosen instance type
 eksctl create nodegroup \
   --cluster devops-project \
-  --region us-east-1 \
+  --region us-west-2 \
   --name devops-nodes \
   --node-type t3.small \
   --nodes 2 \
@@ -1130,7 +1130,7 @@ When done, delete all resources to avoid AWS charges:
 kubectl delete -f manifests/
 
 # Delete the EKS cluster (also removes worker EC2 nodes)
-eksctl delete cluster --name devops-project --region us-east-1
+eksctl delete cluster --name devops-project --region us-west-2
 ```
 
 > ⚠️ Always delete the cluster when not using it. EKS charges ~$0.10/hr for the control plane plus EC2 costs for worker nodes.
