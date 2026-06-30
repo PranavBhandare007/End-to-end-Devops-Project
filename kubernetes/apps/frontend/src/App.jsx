@@ -255,7 +255,6 @@ const styles = {
   statCard:    { flex: 1, background: "white", borderRadius: "12px", padding: "20px", textAlign: "center", boxShadow: "0 1px 4px rgba(0,0,0,0.08)" },
   statNumber:  { fontSize: "32px", fontWeight: "bold", color: "#1e293b" },
   statLabel:   { fontSize: "13px", color: "#94a3b8", marginTop: "4px" },
-  deleteBtn:   { background: "#fee2e2", color: "#dc2626", border: "1px solid #fca5a5", padding: "6px 12px", borderRadius: "6px", cursor: "pointer", fontSize: "12px", fontWeight: "500" },
 };
 
 export default App;
