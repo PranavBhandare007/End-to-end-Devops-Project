@@ -20,7 +20,6 @@ pipeline {
                 //     credentialsId: 'github-token', 
                 //     url: 'https://github.com/PranavBhandare007/End-to-end-Devops-Project.git'
             }
-            }
         }
 
         stage('SonarQube Analysis') {
